@@ -17,7 +17,6 @@ Endpoints:
 """
 
 import modal
-import os
 
 # Create Modal app
 app = modal.App("inception-verdict")
@@ -37,16 +36,17 @@ GPU_CONFIG = modal.gpu.T4()
 
 # Keep container warm for 2 minutes after last request
 # Balances cold start avoidance with cost
-IDLE_TIMEOUT = 120
+SCALEDOWN_WINDOW = 120
+
 
 @app.function(
     image=image,
     gpu=GPU_CONFIG,
     timeout=300,
-    container_idle_timeout=IDLE_TIMEOUT,
-    allow_concurrent_inputs=10,  # Handle multiple requests
+    scaledown_window=SCALEDOWN_WINDOW,  # Updated from container_idle_timeout
+    concurrency_limit=10,  # Updated from allow_concurrent_inputs
 )
-@app.web_endpoint(method="POST", label="embed-query")
+@modal.web_endpoint(method="POST")
 async def embed_query(data: dict):
     """
     Generate 768-dim ModernBERT embedding for search query
@@ -113,8 +113,12 @@ async def embed_query(data: dict):
         return {"error": f"Internal error: {str(e)}"}, 500
 
 
-@app.function(image=image, gpu=GPU_CONFIG)
-@app.web_endpoint(method="GET", label="health")
+@app.function(
+    image=image,
+    gpu=GPU_CONFIG,
+    scaledown_window=SCALEDOWN_WINDOW,
+)
+@modal.web_endpoint(method="GET")
 async def health():
     """
     Health check endpoint
@@ -145,8 +149,12 @@ async def health():
         }, 503
 
 
-@app.function(image=image, gpu=GPU_CONFIG)
-@app.web_endpoint(method="GET", label="info")
+@app.function(
+    image=image,
+    gpu=GPU_CONFIG,
+    scaledown_window=SCALEDOWN_WINDOW,
+)
+@modal.web_endpoint(method="GET")
 async def info():
     """
     Get model and service information
