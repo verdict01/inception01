@@ -21,21 +21,25 @@ import modal
 # Create Modal app
 app = modal.App("inception-verdict")
 
-# Docker image: FreeLawProject Inception v2
-# Contains ModernBERT model and FastAPI service
-image = modal.Image.from_registry(
-    "freelawproject/inception:v2",
-).pip_install(
-    "requests",  # For internal HTTP calls
+# Build from Inception source (since Docker Hub image not accessible)
+# This will clone the repo and build from Dockerfile
+image = (
+    modal.Image.from_dockerfile(
+        "https://github.com/freelawproject/inception.git",
+        dockerfile_path="Dockerfile",
+        context_mount=modal.Mount.from_local_dir(
+            ".",
+            remote_path="/root/context",
+            condition=lambda pth: False,  # Don't mount anything
+        ),
+        build_args={"TARGET_ENV": "prod"},
+    )
 )
 
-# GPU configuration
-# T4: Free tier (30 hrs/month), ~50ms inference
-# A10G: Paid upgrade, ~30ms inference (if needed later)
-GPU_CONFIG = modal.gpu.T4()
+# GPU configuration - updated to Modal 1.0 syntax
+GPU_CONFIG = "T4"  # Changed from modal.gpu.T4()
 
 # Keep container warm for 2 minutes after last request
-# Balances cold start avoidance with cost
 SCALEDOWN_WINDOW = 120
 
 
@@ -43,157 +47,101 @@ SCALEDOWN_WINDOW = 120
     image=image,
     gpu=GPU_CONFIG,
     timeout=300,
-    scaledown_window=SCALEDOWN_WINDOW,  # Updated from container_idle_timeout
-    concurrency_limit=10,  # Updated from allow_concurrent_inputs
+    scaledown_window=SCALEDOWN_WINDOW,
+    max_containers=10,  # Updated from concurrency_limit
 )
-@modal.web_endpoint(method="POST")
-async def embed_query(data: dict):
+@modal.asgi_app()
+def embed_query_endpoint():
     """
-    Generate 768-dim ModernBERT embedding for search query
+    Main FastAPI endpoint - forwards to Inception service
     
-    Request:
-      POST /embed-query
-      {"text": "landlord heating repair obligations"}
-    
-    Response:
-      {
-        "embedding": [0.123, -0.456, ..., 0.789],  // 768 floats
-        "model": "modernbert-embed-base_finetune_512",
-        "dimensions": 768
-      }
+    This mounts the Inception FastAPI app running on port 8005
     """
-    import requests
+    import subprocess
     import time
-    
-    start_time = time.time()
-    
-    # Validate input
-    if not data or "text" not in data:
-        return {"error": "Missing 'text' field in request body"}, 400
-    
-    text = data["text"]
-    if not text or not text.strip():
-        return {"error": "Text cannot be empty"}, 400
-    
-    try:
-        # Forward to Inception service running inside container on port 8005
-        response = requests.post(
-            "http://localhost:8005/api/v1/embed/query",
-            json={"text": text},
-            timeout=30
-        )
-        
-        if not response.ok:
-            return {
-                "error": f"Inception API error: {response.status_code}",
-                "details": response.text
-            }, response.status_code
-        
-        result = response.json()
-        
-        # Validate embedding dimensions
-        if "embedding" not in result:
-            return {"error": "Invalid response from Inception"}, 500
-        
-        if len(result["embedding"]) != 768:
-            return {
-                "error": f"Invalid dimensions: expected 768, got {len(result['embedding'])}"
-            }, 500
-        
-        # Add metadata
-        result["latency_ms"] = int((time.time() - start_time) * 1000)
-        result["dimensions"] = len(result["embedding"])
-        result["model"] = "modernbert-embed-base_finetune_512"
-        
-        return result
-        
-    except requests.Timeout:
-        return {"error": "Embedding generation timeout (30s)"}, 504
-    except Exception as e:
-        return {"error": f"Internal error: {str(e)}"}, 500
-
-
-@app.function(
-    image=image,
-    gpu=GPU_CONFIG,
-    scaledown_window=SCALEDOWN_WINDOW,
-)
-@modal.web_endpoint(method="GET")
-async def health():
-    """
-    Health check endpoint
-    
-    Returns:
-      {"status": "healthy", "service": "inception", "gpu": true}
-    """
+    from fastapi import FastAPI, HTTPException, Request
+    from fastapi.responses import JSONResponse
     import requests
     
-    try:
-        response = requests.get(
-            "http://localhost:8005/health",
-            timeout=5
-        )
-        
+    # Start Inception service in background
+    subprocess.Popen([
+        "uvicorn",
+        "inception.main:app",
+        "--host", "0.0.0.0",
+        "--port", "8005",
+        "--workers", "1",
+    ])
+    
+    # Wait for service to start
+    time.sleep(5)
+    
+    # Create FastAPI wrapper
+    web_app = FastAPI(title="Inception Verdict Wrapper")
+    
+    @web_app.post("/embed-query")
+    async def embed_query(request: Request):
+        """Generate 768-dim ModernBERT embedding"""
+        try:
+            data = await request.json()
+            
+            if not data or "text" not in data:
+                raise HTTPException(status_code=400, detail="Missing 'text' field")
+            
+            # Forward to Inception
+            response = requests.post(
+                "http://localhost:8005/api/v1/embed/query",
+                json={"text": data["text"]},
+                timeout=30
+            )
+            
+            if not response.ok:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Inception error: {response.text}"
+                )
+            
+            result = response.json()
+            
+            # Validate
+            if "embedding" not in result or len(result["embedding"]) != 768:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Invalid embedding: {len(result.get('embedding', []))} dimensions"
+                )
+            
+            return result
+            
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @web_app.get("/health")
+    async def health():
+        """Health check"""
+        try:
+            response = requests.get("http://localhost:8005/health", timeout=5)
+            return {
+                "status": "healthy" if response.ok else "unhealthy",
+                "inception_status": response.status_code
+            }
+        except:
+            return {"status": "unhealthy"}
+    
+    @web_app.get("/info")
+    async def info():
+        """Model info"""
         return {
-            "status": "healthy" if response.ok else "unhealthy",
-            "service": "inception",
-            "gpu": True,
-            "inception_status": response.status_code
+            "model": "modernbert-embed-base_finetune_512",
+            "dimensions": 768,
+            "max_tokens": 8192,
+            "provider": "FreeLawProject",
+            "gpu": "T4",
+            "deployment": "Modal",
+            "version": "V5.10.0"
         }
-    except Exception as e:
-        return {
-            "status": "unhealthy",
-            "service": "inception",
-            "gpu": True,
-            "error": str(e)
-        }, 503
-
-
-@app.function(
-    image=image,
-    gpu=GPU_CONFIG,
-    scaledown_window=SCALEDOWN_WINDOW,
-)
-@modal.web_endpoint(method="GET")
-async def info():
-    """
-    Get model and service information
     
-    Returns:
-      {
-        "model": "modernbert-embed-base_finetune_512",
-        "dimensions": 768,
-        "max_tokens": 8192,
-        "provider": "FreeLawProject",
-        "gpu": "T4"
-      }
-    """
-    import requests
-    
-    try:
-        # Try to get info from Inception
-        response = requests.get(
-            "http://localhost:8005/",
-            timeout=5
-        )
-        
-        inception_info = response.json() if response.ok else {}
-    except:
-        inception_info = {}
-    
-    return {
-        "model": "modernbert-embed-base_finetune_512",
-        "dimensions": 768,
-        "max_tokens": 8192,
-        "provider": "FreeLawProject",
-        "gpu": "T4",
-        "deployment": "Modal",
-        "version": "V5.10.0",
-        "inception_info": inception_info
-    }
+    return web_app
 
 
-# Local testing (optional)
 if __name__ == "__main__":
     print("Deploy with: modal deploy modal_inception.py")
-    print("Test locally with: modal serve modal_inception.py")
+    print("This will build from https://github.com/freelawproject/inception")
