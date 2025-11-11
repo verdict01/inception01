@@ -78,7 +78,7 @@ railway up
 
 # 4. Get your URL
 railway status
-# Example: https://inception-verdict-production.up.railway.app
+# Example: https://inception01-production.up.railway.app
 ```
 
 **Full guide:** [RAILWAY.md](./RAILWAY.md)
@@ -106,10 +106,10 @@ modal deploy modal_inception.py
 ### 1. Set Environment Variable (Vercel)
 
 ```bash
-# Railway (primary)
-INCEPTION_API_URL=https://your-app.up.railway.app
+# Railway (primary) - PRODUCTION
+INCEPTION_API_URL=https://inception01-production.up.railway.app
 
-# Or Modal (if using as primary - not recommended for JWT apps)
+# Or Modal (backup - not recommended for JWT apps)
 INCEPTION_API_URL=https://verdict01--inception-verdict-web.modal.run
 ```
 
@@ -181,7 +181,7 @@ Both Railway and Modal expose the same API:
 ### POST / (Generate Embedding)
 
 ```bash
-curl -X POST https://your-endpoint/ \
+curl -X POST https://inception01-production.up.railway.app/ \
   -H "Content-Type: application/json" \
   -d '{"text": "landlord heating repair"}'
 ```
@@ -201,13 +201,13 @@ curl -X POST https://your-endpoint/ \
 ### GET /health
 
 ```bash
-curl https://your-endpoint/health
+curl https://inception01-production.up.railway.app/health
 ```
 
 ### GET /info
 
 ```bash
-curl https://your-endpoint/info
+curl https://inception01-production.up.railway.app/info
 ```
 
 ## 💰 Cost Analysis
@@ -264,9 +264,9 @@ See [MODAL.md](./MODAL.md#troubleshooting)
 
 1. ✅ Deploy Railway (see RAILWAY.md)
 2. ✅ Test Railway endpoint
-3. ✅ Update `INCEPTION_API_URL` in Vercel to Railway URL
-4. ✅ Deploy Vercel production
-5. ✅ Monitor for 24 hours
+3. ⏳ Update `INCEPTION_API_URL` in Vercel to Railway URL
+4. ⏳ Deploy Vercel production
+5. ⏳ Monitor for 24 hours
 6. ✅ **Keep Modal deployed as backup** (costs $0)
 
 ### Fallback Implementation (Optional)
@@ -302,17 +302,18 @@ async embedQuery(query: string) {
 
 | Service | Status | URL | Purpose |
 |---------|--------|-----|---------|
-| **Railway** | ⏳ Pending | TBD | Production (PRIMARY) |
+| **Railway** | ✅ Deployed | https://inception01-production.up.railway.app | Production (PRIMARY) |
 | **Modal** | ✅ Deployed | https://verdict01--inception-verdict-web.modal.run | Backup/Development |
 
 ## 🗺️ Roadmap
 
 - [x] Modal GPU deployment (completed)
 - [x] Railway CPU deployment files (completed)
-- [ ] **Deploy Railway production**
+- [x] **Deploy Railway production** ✅ 
+- [x] Optimize Docker image for 4GB Railway limit ✅
 - [ ] Update Vercel environment variables
 - [ ] End-to-end testing with Railway
-- [ ] Monitor Railway performance
+- [ ] Monitor Railway performance (24 hours)
 - [ ] Keep Modal as backup (always free)
 - [ ] Custom domain: inception.verdict.services
 
@@ -324,5 +325,6 @@ Issues and improvements welcome at https://github.com/verdict01/inception01/issu
 
 **Version:** V5.10.1  
 **Primary Deployment:** Railway (always-on CPU) ⭐  
+**Production URL:** https://inception01-production.up.railway.app  
 **Backup Deployment:** Modal (free tier GPU)  
 **Last Updated:** 2025-11-11
