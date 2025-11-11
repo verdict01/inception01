@@ -1,5 +1,7 @@
 # 🚂 Railway Deployment (PRIMARY - Production Ready)
 
+**✅ DEPLOYED:** https://inception01-production.up.railway.app
+
 **Recommended for production** - Always-on CPU deployment that solves Modal GPU cold start + Clerk JWT timing issues.
 
 ## Why Railway?
@@ -30,6 +32,21 @@ User Query → Clerk JWT (60s expiry) → Embedding Request
         Railway Response: 500ms-2s ✅
                 ↓
         JWT Still Valid → Success 🎉
+```
+
+## ✅ Current Deployment
+
+**Production URL:** https://inception01-production.up.railway.app
+
+**Test it:**
+```bash
+# Health check
+curl https://inception01-production.up.railway.app/health
+
+# Generate embedding (500ms-2s)
+curl -X POST https://inception01-production.up.railway.app/ \
+  -H "Content-Type: application/json" \
+  -d '{"text": "landlord heating repair"}'
 ```
 
 ## Quick Deploy to Railway
@@ -73,23 +90,32 @@ Railway automatically sets `PORT` - no config needed!
 
 ```bash
 railway status
-# Example: https://inception-verdict-production.up.railway.app
+# Example: https://inception01-production.up.railway.app
 ```
 
 ### 5. Update Vercel Environment Variable
 
 ```bash
-INCEPTION_API_URL=https://your-app-name.up.railway.app
+INCEPTION_API_URL=https://inception01-production.up.railway.app
 ```
 
 ## Test Your Railway Deployment
 
 ```bash
 # Health check
-curl https://your-app.up.railway.app/health
+curl https://inception01-production.up.railway.app/health
+
+# Expected response:
+# {
+#   "status": "healthy",
+#   "model": "modernbert-embed-base_finetune_512",
+#   "device": "cpu",
+#   "deployment": "Railway CPU",
+#   "always_on": true
+# }
 
 # Generate embedding
-curl -X POST https://your-app.up.railway.app/ \
+curl -X POST https://inception01-production.up.railway.app/ \
   -H "Content-Type: application/json" \
   -d '{"text": "landlord heating repair"}'
 
@@ -158,6 +184,13 @@ railway logs
 railway up --detach
 ```
 
+### Image Too Large (8.3GB)
+
+**Solution:** Already fixed in latest Dockerfile
+- Uses CPU-only PyTorch (~200MB vs ~2GB CUDA)
+- Multi-stage build
+- Final image: ~2.5GB (under 4GB limit)
+
 ### High Latency (>5s)
 
 - Check Railway metrics (CPU/memory)
@@ -199,12 +232,12 @@ Railway automatically deploys on git push to main:
 
 ## Migration from Modal
 
-1. Deploy to Railway (see above)
-2. Test endpoint
-3. Update `INCEPTION_API_URL` in Vercel
-4. Deploy Vercel
-5. Monitor for 24 hours
-6. Keep Modal as backup (free tier)
+1. ✅ Deploy to Railway (DONE)
+2. ✅ Test endpoint (DONE)
+3. ⏳ Update `INCEPTION_API_URL` in Vercel
+4. ⏳ Deploy Vercel
+5. ⏳ Monitor for 24 hours
+6. ✅ Keep Modal as backup (free tier)
 
 ## Support
 
@@ -214,4 +247,6 @@ Railway automatically deploys on git push to main:
 
 ---
 
-**Status: ✅ Production Ready for Verdict V5.10**
+**Status: ✅ Deployed and Production Ready**  
+**URL:** https://inception01-production.up.railway.app  
+**Version:** V5.10.1
