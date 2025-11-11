@@ -53,7 +53,7 @@ SCALEDOWN_WINDOW = 120
     scaledown_window=SCALEDOWN_WINDOW,
     max_containers=10,
 )
-@app.asgi_app()
+@modal.asgi_app()  # Fixed: modal.asgi_app() not app.asgi_app()
 def web():
     """
     FastAPI app for ModernBERT embeddings
