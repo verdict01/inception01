@@ -1,0 +1,12 @@
+# V5.10 Inception - ModernBERT Embeddings
+# Railway CPU deployment (always-on, no cold starts)
+
+sentence-transformers>=3.0.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.9.0
+pydantic-settings>=2.5.0
+prometheus-client>=0.21.0
+nltk>=3.9.0
+torch>=2.5.0
+transformers>=4.46.0
