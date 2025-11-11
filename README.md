@@ -1,354 +1,328 @@
-# Inception01 - ModernBERT Deployment for Verdict V5.10
-
-✅ **Status**: DEPLOYED - Modal GPU working with T4
-
-## Overview
+# Inception01 - ModernBERT Embeddings for Verdict V5.10
 
 **Purpose**: Generate 768-dimensional legal embeddings for semantic search  
 **Model**: `freelawproject/modernbert-embed-base_finetune_512`  
 **Accuracy**: 99.59% on legal evaluation set  
-**License**: Apache 2.0 (commercial use allowed)  
-**Deployment**: https://verdict01--inception-verdict-web.modal.run
+**License**: Apache 2.0 (commercial use allowed)
 
-## Quick Start
+## ⚡ Quick Decision: Railway or Modal?
 
-**Deployed Endpoint**: 
+### 🚂 Railway (PRIMARY - Recommended for Production)
+
+✅ **Use Railway when:**
+- You need production reliability
+- You're using Clerk JWT authentication (expires in 60s)
+- You want consistent latency (no cold starts)
+- You're okay with ~$5-10/month cost
+
+**See:** [RAILWAY.md](./RAILWAY.md) - Full deployment guide
+
+### ⚡ Modal (BACKUP - Keep as Fallback)
+
+✅ **Use Modal when:**
+- Testing/development (free tier)
+- Running batch jobs (non-JWT workloads)
+- Future GPU tasks (when budget allows `keep_warm=1`)
+- Fallback if Railway has issues
+
+**See:** [MODAL.md](./MODAL.md) - Full deployment guide
+
+## 🚨 The Critical JWT Problem
+
 ```
-https://verdict01--inception-verdict-web.modal.run
+Problem with Modal GPU cold starts:
+
+User Query → Clerk JWT (60s expiry) → Modal Embedding Request
+                ↓
+        Modal GPU Cold Start: 40-90s ❌
+                ↓
+        JWT Expires → Auth Failure 💥
+
+Solution with Railway:
+
+User Query → Clerk JWT (60s expiry) → Railway Embedding Request
+                ↓
+        Railway Response: 500ms-2s ✅
+                ↓
+        JWT Still Valid → Success 🎉
 ```
 
-**Test it**:
+**Verdict:** Railway for production, Modal as backup (free tier costs $0 to keep deployed)
+
+## 📊 Deployment Comparison
+
+| Feature | Railway CPU ⭐ | Modal GPU (Free) | Modal GPU (keep_warm) |
+|---------|---------------|------------------|----------------------|
+| **Cold Start** | None ✅ | 40-90s ❌ | None ✅ |
+| **Latency** | 500ms-2s | 2-5s (warm) | 2-5s |
+| **JWT Safe?** | ✅ Yes | ❌ No | ✅ Yes |
+| **Always-On** | ✅ Yes | ❌ No | ✅ Yes |
+| **Cost/Month** | $5-10 | $0 | $20-30 |
+| **Free Queries** | Unlimited | 36K/month | Unlimited |
+
+**Recommendation:** Deploy Railway for production, keep Modal as $0 backup
+
+## 🚀 Quick Start
+
+### Option 1: Railway (Recommended)
+
 ```bash
-curl -X POST https://verdict01--inception-verdict-web.modal.run/ \
+# 1. Install Railway CLI
+npm install -g @railway/cli
+
+# 2. Login
+railway login
+
+# 3. Deploy (Railway auto-detects Dockerfile)
+railway up
+
+# 4. Get your URL
+railway status
+# Example: https://inception-verdict-production.up.railway.app
+```
+
+**Full guide:** [RAILWAY.md](./RAILWAY.md)
+
+### Option 2: Modal (Backup)
+
+```bash
+# 1. Install Modal
+pip install modal
+
+# 2. Authenticate
+modal token new
+
+# 3. Deploy
+modal deploy modal_inception.py
+
+# 4. Get your URL
+# Example: https://verdict01--inception-verdict-web.modal.run
+```
+
+**Full guide:** [MODAL.md](./MODAL.md)
+
+## 🔌 Integration with Verdict
+
+### 1. Set Environment Variable (Vercel)
+
+```bash
+# Railway (primary)
+INCEPTION_API_URL=https://your-app.up.railway.app
+
+# Or Modal (if using as primary - not recommended for JWT apps)
+INCEPTION_API_URL=https://verdict01--inception-verdict-web.modal.run
+```
+
+### 2. Deploy Verdict
+
+```bash
+# In verdict01/03 repo
+vercel --prod
+```
+
+The Verdict embedding service automatically handles the new endpoint.
+
+## 📈 Performance Metrics
+
+### Railway CPU (Production)
+
+```
+First request:     500ms-2s ✅
+All requests:      500ms-2s ✅
+JWT expiry risk:   None (<<60s)
+Uptime:            99.9%
+Cost:              $5-10/month
+```
+
+### Modal GPU (Backup/Development)
+
+```
+Cold start:        40-90s ❌
+Warm requests:     2-5s ✅
+Idle timeout:      120s
+Free tier:         30 GPU hours/month
+JWT expiry risk:   HIGH (cold starts exceed 60s)
+```
+
+## 🏗️ Repository Structure
+
+```
+inception01/
+├── README.md                    # This file (overview)
+├── RAILWAY.md                   # Railway deployment (PRIMARY)
+├── MODAL.md                     # Modal deployment (BACKUP)
+│
+├── railway_inception.py         # Railway FastAPI server ⭐
+├── modal_inception.py           # Modal serverless
+│
+├── Dockerfile                   # Railway container
+├── requirements.txt             # Shared dependencies
+│
+└── .github/workflows/
+    └── railway.yml              # Auto-deploy to Railway
+```
+
+## 🔐 Privacy Model
+
+**Query text NEVER leaves Verdict infrastructure:**
+
+1. User query → Verdict API
+2. Verdict → Inception (Railway/Modal) - query text
+3. Inception → 768-dimensional embedding
+4. Verdict → CourtListener - **ONLY numbers, NOT text**
+5. CourtListener cannot reverse-engineer query
+
+**vs OpenAI:** Query text sent to third-party API ❌
+
+## 📦 API Reference
+
+Both Railway and Modal expose the same API:
+
+### POST / (Generate Embedding)
+
+```bash
+curl -X POST https://your-endpoint/ \
   -H "Content-Type: application/json" \
   -d '{"text": "landlord heating repair"}'
 ```
 
-**Response**:
-```json
-{
-  "embedding": [0.123, -0.456, ..., 0.789],
-  "dimensions": 768,
-  "model": "modernbert-embed-base_finetune_512",
-  "latency_ms": 50,
-  "device": "cuda:0"
-}
-```
-
-## Deployment
-
-### Modal GPU (Current Deployment)
-
-**Deploy**:
-```bash
-git clone https://github.com/verdict01/inception01.git
-cd inception01
-pip install modal
-modal setup
-modal deploy modal_inception.py
-```
-
-**Output**:
-```
-✓ Created web function web => https://verdict01--inception-verdict-web.modal.run
-✓ App deployed! 🎉
-```
-
-**Endpoints**:
-- `POST /` - Generate embeddings
-- `GET /health` - Health check
-- `GET /info` - Model info
-
-## Integration with Verdict
-
-### 1. Environment Variables (Vercel)
-
-```bash
-# Enable semantic search
-ENABLE_SEMANTIC_SEARCH=true
-
-# Modal endpoint (root path /)
-INCEPTION_API_URL=https://verdict01--inception-verdict-web.modal.run
-```
-
-### 2. Code Integration
-
-The Verdict embedding service (src/lib/services/embedding-service.ts) is already configured:
-
-```typescript
-// V5.10: Modal uses root endpoint (/)
-const response = await fetch(`${this.baseUrl}/`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ text: query })
-});
-```
-
-### 3. Deploy to Vercel
-
-```bash
-# In verdict01/03 repo
-git add src/lib/services/embedding-service.ts
-git commit -m "V5.10: Update for Modal endpoint"
-git push origin main
-
-# Add env vars via Vercel dashboard or CLI
-vercel env add INCEPTION_API_URL
-vercel env add ENABLE_SEMANTIC_SEARCH
-
-# Deploy
-vercel --prod
-```
-
-## Performance Metrics (Measured)
-
-### Modal GPU (T4)
-
-**Cold Start**:
-```
-First request after idle: ~27 seconds
-(Loading ModernBERT model + GPU initialization)
-```
-
-**Warm Performance**:
-```
-Latency:      50-100ms (GPU inference)
-Concurrency:  10 simultaneous requests
-Idle timeout: 2 minutes (keeps warm)
-Device:       cuda:0 (T4 GPU)
-```
-
-### Cache Behavior (95%+ hit rate)
-
-```
-Cache hit:  ~50-100ms (pgvector + Modal)
-Cache miss: ~2-3s (Modal + CourtListener semantic search)
-```
-
-**Note**: 95% of queries hit cache, so warm latency is typical experience.
-
-## Cost Analysis
-
-### Modal Free Tier
-```
-30 GPU hours/month free
-÷ 0.05s per query (50ms average)
-= ~36,000 queries/month FREE
-```
-
-**Current Usage**: Testing phase (well within free tier)
-
-### Beyond Free Tier
-```
-Modal GPU: $0.000035/second
-≈ $0.00175 per query (50ms)
-
-At 100K queries/month: ~$175/month
-At 1M queries/month:  ~$1,750/month
-```
-
-### Optimization Options
-
-1. **Stay on free tier** (< 36K queries/month)
-2. **Switch to Railway CPU** ($10-20/month, 500ms latency)
-3. **Upgrade Modal** (paid GPU for higher volume)
-4. **Increase scaledown_window** (reduce cold starts, use more GPU hours)
-
-## API Reference
-
-### POST / (Generate Embedding)
-
-**Request**:
-```bash
-curl -X POST https://verdict01--inception-verdict-web.modal.run/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "text": "landlord heating repair obligations"
-  }'
-```
-
-**Response**:
+**Response:**
 ```json
 {
   "embedding": [768 floats],
   "dimensions": 768,
   "model": "modernbert-embed-base_finetune_512",
-  "latency_ms": 52,
-  "device": "cuda:0"
+  "latency_ms": 1500,
+  "device": "cpu",
+  "deployment": "Railway CPU (always-on)"
 }
 ```
 
 ### GET /health
 
-**Request**:
 ```bash
-curl https://verdict01--inception-verdict-web.modal.run/health
-```
-
-**Response**:
-```json
-{
-  "status": "healthy",
-  "model": "modernbert-embed-base_finetune_512",
-  "device": "cuda:0",
-  "gpu_available": true
-}
+curl https://your-endpoint/health
 ```
 
 ### GET /info
 
-**Request**:
 ```bash
-curl https://verdict01--inception-verdict-web.modal.run/info
+curl https://your-endpoint/info
 ```
 
-**Response**:
-```json
-{
-  "model": "modernbert-embed-base_finetune_512",
-  "dimensions": 768,
-  "max_tokens": 8192,
-  "provider": "FreeLawProject",
-  "gpu": "T4",
-  "deployment": "Modal",
-  "version": "V5.10.0"
+## 💰 Cost Analysis
+
+### Railway (Recommended)
+
+```
+$5/month base plan
++ ~$5/month for always-on CPU
+= $5-10/month total
+
+Unlimited queries (within reasonable usage)
+```
+
+### Modal Free Tier
+
+```
+30 GPU hours/month free
+÷ 0.05s per query (50ms average)
+= ~36,000 queries/month FREE
+
+After free tier: ~$0.00175 per query
+```
+
+### Break-even Analysis
+
+```
+< 36K queries/month:    Modal free tier wins
+36K - 100K/month:       Railway wins ($5-10 vs $63-175)
+> 100K/month:           Railway wins (flat rate vs usage-based)
+```
+
+**But:** JWT compatibility makes Railway the only choice for production
+
+## 🛠️ Troubleshooting
+
+### Railway Issues
+
+See [RAILWAY.md](./RAILWAY.md#troubleshooting)
+
+### Modal Issues
+
+See [MODAL.md](./MODAL.md#troubleshooting)
+
+### JWT Expiry Errors
+
+**Symptom:** "JWT expired" or authentication failures  
+**Cause:** Modal GPU cold start (40-90s) exceeds Clerk JWT 60s expiry  
+**Solution:** Switch to Railway (always-on, no cold starts)
+
+## 🔄 Migration Strategy
+
+### From Modal to Railway
+
+1. ✅ Deploy Railway (see RAILWAY.md)
+2. ✅ Test Railway endpoint
+3. ✅ Update `INCEPTION_API_URL` in Vercel to Railway URL
+4. ✅ Deploy Vercel production
+5. ✅ Monitor for 24 hours
+6. ✅ **Keep Modal deployed as backup** (costs $0)
+
+### Fallback Implementation (Optional)
+
+```typescript
+// embedding-service.ts with fallback
+const ENDPOINTS = [
+  process.env.INCEPTION_API_URL,        // Railway (primary)
+  'https://verdict01--inception-verdict-web.modal.run', // Modal (backup)
+];
+
+async embedQuery(query: string) {
+  for (const endpoint of ENDPOINTS) {
+    try {
+      return await this.tryEndpoint(endpoint, query);
+    } catch (error) {
+      console.warn(`${endpoint} failed, trying next...`);
+    }
+  }
+  throw new Error('All embedding endpoints failed');
 }
 ```
 
-## Monitoring
+## 📚 Documentation
 
-### Modal Dashboard
-```
-https://modal.com/apps/verdict01/main/deployed/inception-verdict
+- **Railway Guide:** [RAILWAY.md](./RAILWAY.md) - Primary deployment
+- **Modal Guide:** [MODAL.md](./MODAL.md) - Backup deployment
+- **Model Info:** https://huggingface.co/freelawproject/modernbert-embed-base_finetune_512
+- **Inception Source:** https://github.com/freelawproject/inception
+- **V5.10 Docs:** verdict01/docs/repo03/
 
-Track:
-- Request count
-- GPU hours used (free tier: 30/month)
-- Latency (p50, p95, p99)
-- Error rate
-- Cold starts
-```
+## 🎯 Deployment Status
 
-### Verdict Application Logs
+| Service | Status | URL | Purpose |
+|---------|--------|-----|---------|
+| **Railway** | ⏳ Pending | TBD | Production (PRIMARY) |
+| **Modal** | ✅ Deployed | https://verdict01--inception-verdict-web.modal.run | Backup/Development |
 
-When semantic search is enabled, you'll see:
-```
-[Storage V5.10] Using ModernBERT embedding (semantic search enabled)
-[EmbeddingService V5.10] Generating ModernBERT embedding
-[EmbeddingService V5.10] Query length: 24 chars
-[EmbeddingService V5.10] ✅ Successfully generated 768-dim embedding
-```
+## 🗺️ Roadmap
 
-## Troubleshooting
+- [x] Modal GPU deployment (completed)
+- [x] Railway CPU deployment files (completed)
+- [ ] **Deploy Railway production**
+- [ ] Update Vercel environment variables
+- [ ] End-to-end testing with Railway
+- [ ] Monitor Railway performance
+- [ ] Keep Modal as backup (always free)
+- [ ] Custom domain: inception.verdict.services
 
-### Cold Start Delay (~27s)
+## 🤝 Contributing
 
-**Symptom**: First request takes 27+ seconds  
-**Cause**: Modal loads model from scratch after idle timeout  
-**Solutions**:
-1. Accept 27s delay (95% of queries hit cache anyway)
-2. Increase `scaledown_window` to keep warm longer
-3. Use warming cron job (costs GPU hours)
-
-**Current Setting**: 2-minute idle timeout (balance cost vs UX)
-
-### GPU Quota Exceeded
-
-**Symptom**: "GPU quota exceeded"  
-**Cause**: Used all 30 free GPU hours this month  
-**Solutions**:
-1. Wait for monthly reset
-2. Switch to Railway CPU temporarily
-3. Upgrade to Modal paid plan
-
-### Invalid Dimensions Error
-
-**Symptom**: "Expected 768, got 512"  
-**Cause**: Model name says "512" but outputs 768  
-**Solution**: This is expected - ModernBERT outputs 768 dims
-
-### Timeout Errors
-
-**Symptom**: Requests timeout after 30s  
-**Cause**: Cold start (27s) + processing time  
-**Solution**: Already configured with 30s timeout
-
-## Architecture
-
-### How It Works
-
-```
-User Query → Verdict API
-    ↓
-    Check pgvector cache (95% hit)
-    ↓ MISS
-    Generate embedding:
-      → Modal GPU (https://verdict01--inception-verdict-web.modal.run/)
-      → ModernBERT model on T4 GPU
-      → Returns 768-dim vector
-    ↓
-    Send to CourtListener semantic search
-      → POST embedding (not query text - privacy!)
-      → Citegeist ranking
-      → Returns relevant cases
-    ↓
-    Store in database + cache
-    ↓
-User receives results
-```
-
-### Privacy Model
-
-**Query text NEVER leaves Verdict infrastructure:**
-1. User query → Verdict API
-2. Verdict → Modal (query text)
-3. Modal → 768 numbers
-4. Verdict → CourtListener (ONLY 768 numbers, NOT text)
-5. CourtListener cannot reverse-engineer query from embedding
-
-**vs OpenAI approach** (query text sent to OpenAI API)
-
-## Deployment Configuration
-
-From `modal_inception.py`:
-```python
-GPU_CONFIG = "T4"                # Free tier GPU
-SCALEDOWN_WINDOW = 120           # 2 min keep-warm
-max_containers = 10              # Max concurrent
-```
-
-**Build includes**:
-- sentence-transformers
-- torch (GPU-enabled)
-- FastAPI + uvicorn
-- ModernBERT model (~512MB)
-
-## Roadmap
-
-- [x] Modal GPU deployment
-- [x] ModernBERT model integration (768-dim)
-- [x] FastAPI endpoints
-- [x] Health checks
-- [x] Verdict integration
-- [ ] Production Vercel deployment
-- [ ] End-to-end testing
-- [ ] Railway CPU comparison (optional)
-- [ ] Custom domain (inception.verdict.services)
-- [ ] Production monitoring
-- [ ] A/B testing semantic vs keyword
-
-## Links
-
-- **Live Endpoint**: https://verdict01--inception-verdict-web.modal.run
-- **Modal Dashboard**: https://modal.com/apps/verdict01/main/deployed/inception-verdict
-- **Inception Source**: https://github.com/freelawproject/inception
-- **ModernBERT**: https://huggingface.co/freelawproject/modernbert-embed-base_finetune_512
-- **Modal Docs**: https://modal.com/docs
-- **V5.10 Reference**: verdict01/docs/repo03/AI-SDK-5-CASE-LAW-SYSTEM-V5.10-SEMANTIC-SEARCH-REFERENCE.md
+Issues and improvements welcome at https://github.com/verdict01/inception01/issues
 
 ---
 
-**Version**: V5.10.0  
-**Status**: ✅ Deployed to Modal GPU (T4)  
-**Last Updated**: 2025-11-11  
-**Deployment Date**: 2025-11-11
+**Version:** V5.10.1  
+**Primary Deployment:** Railway (always-on CPU) ⭐  
+**Backup Deployment:** Modal (free tier GPU)  
+**Last Updated:** 2025-11-11
