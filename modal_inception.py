@@ -11,9 +11,8 @@ Usage:
   modal deploy modal_inception.py
 
 Endpoints:
-  POST /embed-query  - Generate embedding for search query
-  GET  /health       - Health check
-  GET  /info         - Model info
+  POST /  - Generate embedding for search query
+  GET  /health - Health check
 """
 
 import modal
@@ -21,25 +20,29 @@ import modal
 # Create Modal app
 app = modal.App("inception-verdict")
 
-# Build from Inception source (since Docker Hub image not accessible)
-# This will clone the repo and build from Dockerfile
+# Build image with Inception dependencies
+# This installs from GitHub and downloads ModernBERT model
 image = (
-    modal.Image.from_dockerfile(
-        "https://github.com/freelawproject/inception.git",
-        dockerfile_path="Dockerfile",
-        context_mount=modal.Mount.from_local_dir(
-            ".",
-            remote_path="/root/context",
-            condition=lambda pth: False,  # Don't mount anything
-        ),
-        build_args={"TARGET_ENV": "prod"},
+    modal.Image.debian_slim(python_version="3.12")
+    .pip_install(
+        "sentence-transformers>=3.0.0",
+        "fastapi>=0.115.0",
+        "uvicorn[standard]>=0.32.0",
+        "pydantic>=2.9.0",
+        "pydantic-settings>=2.5.0",
+        "prometheus-client>=0.21.0",
+        "nltk>=3.9.0",
+        "torch>=2.5.0",
+        "transformers>=4.46.0",
+    )
+    .run_commands(
+        "python -c 'import nltk; nltk.download(\"punkt_tab\")'",
+        "python -c 'from sentence_transformers import SentenceTransformer; SentenceTransformer(\"freelawproject/modernbert-embed-base_finetune_512\")'",
     )
 )
 
-# GPU configuration - updated to Modal 1.0 syntax
-GPU_CONFIG = "T4"  # Changed from modal.gpu.T4()
-
-# Keep container warm for 2 minutes after last request
+# GPU configuration
+GPU_CONFIG = "T4"
 SCALEDOWN_WINDOW = 120
 
 
@@ -48,83 +51,102 @@ SCALEDOWN_WINDOW = 120
     gpu=GPU_CONFIG,
     timeout=300,
     scaledown_window=SCALEDOWN_WINDOW,
-    max_containers=10,  # Updated from concurrency_limit
+    max_containers=10,
 )
-@modal.asgi_app()
-def embed_query_endpoint():
+@app.asgi_app()
+def web():
     """
-    Main FastAPI endpoint - forwards to Inception service
-    
-    This mounts the Inception FastAPI app running on port 8005
+    FastAPI app for ModernBERT embeddings
     """
-    import subprocess
-    import time
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.responses import JSONResponse
-    import requests
+    from sentence_transformers import SentenceTransformer
+    import torch
     
-    # Start Inception service in background
-    subprocess.Popen([
-        "uvicorn",
-        "inception.main:app",
-        "--host", "0.0.0.0",
-        "--port", "8005",
-        "--workers", "1",
-    ])
+    # Load model once at startup
+    print("Loading ModernBERT model...")
+    model = SentenceTransformer(
+        "freelawproject/modernbert-embed-base_finetune_512",
+        device="cuda" if torch.cuda.is_available() else "cpu"
+    )
+    print(f"Model loaded on: {model.device}")
     
-    # Wait for service to start
-    time.sleep(5)
+    # Create FastAPI app
+    web_app = FastAPI(
+        title="Inception Verdict - ModernBERT Embeddings",
+        version="V5.10.0"
+    )
     
-    # Create FastAPI wrapper
-    web_app = FastAPI(title="Inception Verdict Wrapper")
-    
-    @web_app.post("/embed-query")
+    @web_app.post("/")
     async def embed_query(request: Request):
-        """Generate 768-dim ModernBERT embedding"""
+        """
+        Generate 768-dim ModernBERT embedding
+        
+        Request:
+          POST /
+          {"text": "landlord heating repair obligations"}
+        
+        Response:
+          {
+            "embedding": [0.123, -0.456, ..., 0.789],
+            "dimensions": 768,
+            "model": "modernbert-embed-base_finetune_512"
+          }
+        """
+        import time
+        
         try:
+            start_time = time.time()
             data = await request.json()
             
             if not data or "text" not in data:
                 raise HTTPException(status_code=400, detail="Missing 'text' field")
             
-            # Forward to Inception
-            response = requests.post(
-                "http://localhost:8005/api/v1/embed/query",
-                json={"text": data["text"]},
-                timeout=30
+            text = data["text"]
+            if not text or not text.strip():
+                raise HTTPException(status_code=400, detail="Text cannot be empty")
+            
+            # Prefix for optimal results (from Inception)
+            prefixed_text = f"search_query: {text}"
+            
+            # Generate embedding
+            embedding = model.encode(
+                prefixed_text,
+                convert_to_numpy=True,
+                show_progress_bar=False
             )
             
-            if not response.ok:
-                raise HTTPException(
-                    status_code=response.status_code,
-                    detail=f"Inception error: {response.text}"
-                )
-            
-            result = response.json()
-            
-            # Validate
-            if "embedding" not in result or len(result["embedding"]) != 768:
+            # Validate dimensions
+            if len(embedding) != 768:
                 raise HTTPException(
                     status_code=500,
-                    detail=f"Invalid embedding: {len(result.get('embedding', []))} dimensions"
+                    detail=f"Invalid dimensions: expected 768, got {len(embedding)}"
                 )
             
-            return result
+            latency_ms = int((time.time() - start_time) * 1000)
             
+            return {
+                "embedding": embedding.tolist(),
+                "dimensions": 768,
+                "model": "modernbert-embed-base_finetune_512",
+                "latency_ms": latency_ms,
+                "device": str(model.device)
+            }
+            
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
     
     @web_app.get("/health")
     async def health():
         """Health check"""
-        try:
-            response = requests.get("http://localhost:8005/health", timeout=5)
-            return {
-                "status": "healthy" if response.ok else "unhealthy",
-                "inception_status": response.status_code
-            }
-        except:
-            return {"status": "unhealthy"}
+        return {
+            "status": "healthy",
+            "model": "modernbert-embed-base_finetune_512",
+            "device": str(model.device),
+            "gpu_available": torch.cuda.is_available()
+        }
     
     @web_app.get("/info")
     async def info():
@@ -134,7 +156,7 @@ def embed_query_endpoint():
             "dimensions": 768,
             "max_tokens": 8192,
             "provider": "FreeLawProject",
-            "gpu": "T4",
+            "gpu": "T4" if torch.cuda.is_available() else "CPU",
             "deployment": "Modal",
             "version": "V5.10.0"
         }
@@ -144,4 +166,4 @@ def embed_query_endpoint():
 
 if __name__ == "__main__":
     print("Deploy with: modal deploy modal_inception.py")
-    print("This will build from https://github.com/freelawproject/inception")
+    print("This will install ModernBERT and run on Modal GPU")
